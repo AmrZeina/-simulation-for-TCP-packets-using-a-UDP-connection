@@ -16,6 +16,7 @@ class ReliableUDP:
         self.seq = 0
         self.expected_seq = 0
         self.is_server = is_server
+        self.connected_addr = None
 
         if is_server:
             self.sock.bind(self.addr)
@@ -101,6 +102,11 @@ class ReliableUDP:
                     print("Duplicate or out-of-order → ignored")
                     continue
 
+                if packet["flags"] == "FIN":
+                    print("FIN received → closing connection")
+                    self.sock.close()
+                    exit()
+
                 print(f"Received: {packet}")
 
                 # Send ACK
@@ -110,7 +116,7 @@ class ReliableUDP:
                     "flags": "ACK",
                     "data": ""
                 }
-
+                    
                 self.sock.sendto(json.dumps(ack_packet).encode(), addr)
                 self.expected_seq += 1
 
@@ -118,3 +124,71 @@ class ReliableUDP:
 
             except:
                 continue
+
+    # -----------------------
+    # HANDSHAKE (CLIENT)
+    # -----------------------
+    def connect(self):
+        syn_packet = {
+            "seq": self.seq,
+            "ack": 0,
+            "flags": "SYN",
+            "data": ""
+        }
+        self.sock.sendto(json.dumps(syn_packet).encode(), self.addr)
+
+        while True:
+            try:
+                data, _ = self.sock.recvfrom(2048)
+                packet = json.loads(data.decode())
+
+                if packet["flags"] == "SYN-ACK":
+                    ack_packet = {
+                        "seq": self.seq,
+                        "ack": packet["seq"],
+                        "flags": "ACK",
+                        "data": ""
+                    }
+                    self.sock.sendto(json.dumps(ack_packet).encode(), self.addr)
+                    print("Connected!")
+                    break
+            except:
+                continue
+
+    # -----------------------
+    # HANDSHAKE (SERVER)
+    # -----------------------
+    def accept(self):
+        self.sock.settimeout(None)
+
+        while True:
+            try:
+                data, addr = self.sock.recvfrom(2048)
+                packet = json.loads(data.decode())
+
+                if packet["flags"] == "SYN":
+                    syn_ack = {
+                        "seq": 0,
+                        "ack": packet["seq"],
+                        "flags": "SYN-ACK",
+                        "data": ""
+                    }
+                    self.sock.sendto(json.dumps(syn_ack).encode(), addr)
+
+                    data, _ = self.sock.recvfrom(2048)
+                    final = json.loads(data.decode())
+
+                    if final["flags"] == "ACK":
+                        print("Client connected")
+                        self.addr = addr
+                        break
+
+            except:
+                continue
+    # -----------------------
+    # CLOSE CONNECTION
+    # -----------------------
+    def close(self):
+        fin = {"seq": self.seq, "ack": 0, "flags": "FIN", "data": ""}
+        self.sock.sendto(json.dumps(fin).encode(), self.addr)
+        print("Connection closed")
